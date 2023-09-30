@@ -9,8 +9,8 @@ dataset/
 *.pt
 *.so
 *trial*
-*.ipynb
-*.sh
+# *.ipynb
+# *.sh
 *analyze*
 *random.py
 *RELEASE_*
@@ -24,7 +24,7 @@ dataset/
 **.json
 **/checkpoint
 **/events.out.*
-**/test*
+# **/test*
 **/pcqm4m-scaf/**
 **/logs/**
 **/lightning_logs/**
