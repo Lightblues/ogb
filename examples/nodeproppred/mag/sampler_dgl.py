@@ -19,6 +19,29 @@ import os.path as osp
 from dgl.data.utils import load_graphs, save_graphs, Subset
 
 
+# C00: 增加了配置项!
+dname = 'tiny'
+# dname = 'ogbn-mag'
+if dname=='tiny':
+    meta_dict = {
+        # 'dir_path': '/home/ec2-user/workspace/tab2graph/datasets/tiny/dgl_data_processed', 
+        'dir_path': '/Users/frankshi/LProjects/github/tab2graph/datasets/tiny/dgl_data_processed',
+        'num tasks': 1, 'task type': 'multi-class classification', 'eval metric': 'acc', 
+        'num classes': 5, 'is hetero': 'True', 'binary': 'False',
+        'add_inverse_edge': 'False', 'has_node_attr': 'True', 'has_edge_attr': 'False',
+        'split': 'time', 'additional node files': 'None', 'additional edge files': 'None'
+    }
+    bs = 32
+elif dname=='ogbn-mag':
+    meta_dict = {
+        'dir_path': '/home/ec2-user/workspace/tab2graph/datasets/ogbn-mag/dgl_data_processed', 
+        'num tasks': 1, 'task type': 'multi-class classification', 'eval metric': 'acc', 
+        'num classes': 349, 'is hetero': 'True', 'binary': 'False',
+        'add_inverse_edge': 'False', 'has_node_attr': 'True', 'has_edge_attr': 'False',
+        'split': 'time', 'additional node files': 'None', 'additional edge files': 'None'
+    }
+    bs = 1024
+
 parser = argparse.ArgumentParser(description='OGBN-MAG (SAGE)')
 parser.add_argument('--device', type=int, default=0)
 parser.add_argument('--num_layers', type=int, default=2)
@@ -142,23 +165,7 @@ additional edge files,None,None,None,edge_reltype,None
 is hetero,False,False,False,True,False
 binary,False,False,False,False,True
 """
-dname = 'tiny'
-meta_dict = {
-    # 'dir_path': '/home/ec2-user/workspace/tab2graph/datasets/tiny/dgl_data_processed', 
-    'dir_path': '/Users/frankshi/LProjects/github/tab2graph/datasets/tiny/dgl_data_processed',
-    'num tasks': 1, 'task type': 'multi-class classification', 'eval metric': 'acc', 
-    'num classes': 5, 'is hetero': 'True', 'binary': 'False',
-    'add_inverse_edge': 'False', 'has_node_attr': 'True', 'has_edge_attr': 'False',
-    'split': 'time', 'additional node files': 'None', 'additional edge files': 'None'
-}
-# dname = 'ogbn-mag'
-# meta_dict = {
-#     'dir_path': '/home/ec2-user/workspace/tab2graph/datasets/ogbn-mag/dgl_data_processed', 
-#     'num tasks': 1, 'task type': 'multi-class classification', 'eval metric': 'acc', 
-#     'num classes': 349, 'is hetero': 'True', 'binary': 'False',
-#     'add_inverse_edge': 'False', 'has_node_attr': 'True', 'has_edge_attr': 'False',
-#     'split': 'time', 'additional node files': 'None', 'additional edge files': 'None'
-# }
+# C01: 定义为用DGL来存储数据! 
 dataset = CustomDglPropPredDataset(name=dname, meta_dict=meta_dict)
 
 split_idx = dataset.get_idx_split()
@@ -169,6 +176,7 @@ logger = Logger(args.runs, args)
 # data.node_year_dict = None
 # data.edge_reltype_dict = None
 
+# C02: 需要为Graph添加两个属性
 data = dataset[0][0]
 print(data)
 data = add_properties_to_dgl(data)
@@ -196,7 +204,6 @@ edge_index_dict = data.edge_index_dict
 # * `local2global`: A dictionary mapping original (local) node indices of
 #    type `key` to global ones.
 # `key2int`: A dictionary that maps original keys to their new canonical type.
-# TODO: 实现这两个数据接口
 out = group_hetero_graph(data.edge_index_dict, data.num_nodes_dict)
 edge_index, edge_type, node_type, local_node_idx, local2global, key2int = out
 
@@ -216,9 +223,12 @@ paper_train_idx = paper_idx[split_idx['train']['paper']]
 
 # NOTE: 在新的图上, bs=1024 会OOM
 train_loader = NeighborSampler(edge_index, node_idx=paper_train_idx,
-                               sizes=[25, 20], batch_size=32, shuffle=True,
+                               sizes=[25, 20], batch_size=bs, shuffle=True,
                                num_workers=0)
                             #    num_workers=10)
+
+full_loader = NeighborSampler(edge_index, node_idx=paper_idx,
+                                sizes=[-1, -1], batch_size=bs, shuffle=False, num_workers=0)
 
 
 class RGCNConv(MessagePassing):
@@ -285,9 +295,15 @@ class RGCN(torch.nn.Module):
         self.num_node_types = num_node_types
         self.num_edge_types = num_edge_types
 
-        # Create embeddings for all node types that do not come with features.
-        self.emb_dict = ParameterDict({
-            f'{key}': Parameter(torch.Tensor(num_nodes_dict[key], in_channels))
+        # C03: 去除了这里的embedding层
+        # # Create embeddings for all node types that do not come with features.
+        # self.emb_dict = ParameterDict({
+        #     f'{key}': Parameter(torch.Tensor(num_nodes_dict[key], in_channels))
+        #     for key in set(node_types).difference(set(x_types))
+        # })
+        # 改为, 其他的节点, 同一个类型就用一个embedding
+        self.emb_dict = ParameterDict({ 
+            f'{key}': Parameter(torch.Tensor(1, in_channels))
             for key in set(node_types).difference(set(x_types))
         })
 
@@ -321,9 +337,12 @@ class RGCN(torch.nn.Module):
             mask = node_type == key
             h[mask] = x[local_node_idx[mask]]
 
+        # for key, emb in self.emb_dict.items():
+        #     mask = node_type == int(key)
+        #     h[mask] = emb[local_node_idx[mask]]
         for key, emb in self.emb_dict.items():
             mask = node_type == int(key)
-            h[mask] = emb[local_node_idx[mask]]
+            h[mask] = emb[0]
 
         return h
 
@@ -344,14 +363,16 @@ class RGCN(torch.nn.Module):
 
         return x.log_softmax(dim=-1)
 
-    def inference(self, x_dict, edge_index_dict, key2int):
+    def inference_fullgraph(self, x_dict, edge_index_dict, key2int):
         # We can perform full-batch inference on GPU.
 
         device = list(x_dict.values())[0].device
 
         x_dict = copy(x_dict)
         for key, emb in self.emb_dict.items():
-            x_dict[int(key)] = emb
+            # x_dict[int(key)] = emb
+            # 需要拓展 emb
+            x_dict[int(key)] = emb[:].expand((node_type==int(key)).sum(), -1)
 
         adj_t_dict = {}
         for key, (row, col) in edge_index_dict.items():
@@ -376,6 +397,18 @@ class RGCN(torch.nn.Module):
             x_dict = out_dict
 
         return x_dict
+
+    # C04: 修改为采用minibatch来进行推理
+    def inference(self, x_dict, edge_index_dict, key2int):
+        res_paper = torch.zeros((num_nodes_dict[key2int['paper']], self.out_channels))
+        for batch_size, n_id, adjs in full_loader:
+            n_id = n_id.to(device)
+            adjs = [adj.to(device) for adj in adjs]
+            out = model(n_id, x_dict, adjs, edge_type, node_type, local_node_idx).cpu()
+            local_paper_idx = n_id[:batch_size] - local2global['paper'][0]
+            res_paper[local_paper_idx] = out
+        return {key2int['paper']: res_paper}
+
 
 
 device = f'cuda:{args.device}' if torch.cuda.is_available() else 'cpu'
