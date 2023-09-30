@@ -1,3 +1,5 @@
+# ============= 代码说明见 c-OGB.md =============
+
 # 先构造数据集! 
 cd tab2graph
 python test/convert_dglData.python # 保存图结构到 datasets/tiny/dgl_data_processed

@@ -329,7 +329,7 @@ class RGCN(torch.nn.Module):
 
     def forward(self, n_id, x_dict, adjs, edge_type, node_type,
                 local_node_idx):
-
+        # TODO: 修改这里的函数!!! 从而去掉embedding层!
         x = self.group_input(x_dict, node_type, local_node_idx, n_id)
         node_type = node_type[n_id]
 
